@@ -51,7 +51,7 @@ test('failed readings retain last valid value without reporting it as current', 
 test('settings reject invalid values and merge per-device visibility', () => {
   const s=normalize({refresh:1,theme:'pink',threshold:1000,visible:{mouse:false},autostart:true});
   assert.equal(s.refresh,10);assert.equal(s.theme,'system');assert.equal(s.threshold,20);assert.equal(s.autostart,true);
-  assert.deepEqual(s.visible,{mouse:false,keyboard:true});
+  assert.deepEqual(s.visible,{mouse:false,keyboard:true,controller:true});
 });
 
 test('notifications ignore charging, disconnected and unsupported devices', () => {

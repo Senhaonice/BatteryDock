@@ -1,6 +1,6 @@
 {
   "name": "battery-dock",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Wireless device battery tray monitor for Windows",
   "author": "BatteryDock",
   "license": "MIT",
@@ -11,9 +11,12 @@
     "test": "node --test test/*.test.cjs",
     "test:app": "node scripts/smoke.cjs",
     "test:ui": "node scripts/ui-regression.cjs",
+    "test:strip": "node scripts/strip-regression.cjs",
     "pack": "electron-builder --win nsis portable --x64"
   },
-  "dependencies": { "node-hid": "3.4.0" },
+  "dependencies": {
+    "node-hid": "3.4.0"
+  },
   "devDependencies": {
     "@napi-rs/canvas": "1.0.11",
     "electron": "44.9.0",
@@ -24,15 +27,29 @@
   "build": {
     "appId": "local.batterydock.app",
     "productName": "BatteryDock",
-    "directories": { "output": "dist", "buildResources": "assets" },
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
     "electronDist": "node_modules/electron/dist",
-    "files": ["src/**/*", "assets/**/*", "package.json"],
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
     "asar": true,
-    "asarUnpack": ["node_modules/node-hid/**/*", "node_modules/pkg-prebuilds/**/*"],
+    "asarUnpack": [
+      "node_modules/node-hid/**/*",
+      "node_modules/pkg-prebuilds/**/*",
+      "src/taskbar-watch.ps1"
+    ],
     "npmRebuild": false,
     "win": {
       "icon": "assets/app.ico",
-      "target": ["nsis", "portable"],
+      "target": [
+        "nsis",
+        "portable"
+      ],
       "signExecutable": false,
       "artifactName": "BatteryDock-${version}-${arch}.${ext}"
     },
@@ -48,6 +65,9 @@
       "artifactName": "BatteryDock-${version}-Setup.${ext}",
       "deleteAppDataOnUninstall": false
     },
-    "portable": { "artifactName": "BatteryDock-${version}-Portable.${ext}", "unpackDirName": "BatteryDock" }
+    "portable": {
+      "artifactName": "BatteryDock-${version}-Portable.${ext}",
+      "unpackDirName": "BatteryDock"
+    }
   }
 }

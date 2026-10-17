@@ -1,0 +1,15 @@
+html, body { width: 100%; height: 100%; }
+body { padding: 8px; }
+.battery-strip { display: flex; width: 100%; height: 54px; padding: 4px; background: var(--panel); border: 1px solid var(--edge); border-radius: 8px; box-shadow: 0 3px 10px -4px var(--shadow); }
+.strip-device { min-width: 0; flex: 1; border: 0; padding: 3px 6px; display: flex; justify-content: center; align-items: center; gap: 7px; background: transparent; border-radius: 4px; text-align: left; }
+.strip-device + .strip-device { border-left: 1px solid var(--line); }
+.strip-device:hover { background: var(--hover); }
+.strip-photo { object-fit: contain; width: 38px; height: 36px; flex-shrink: 0; }
+.strip-device[data-device="mouse"] .strip-photo { width: 25px; }
+.strip-copy { display: flex; flex-direction: column; min-width: 0; }
+.strip-label { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.strip-reading { display: flex; align-items: baseline; gap: 1px; font-size: 21px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; line-height: 1.1; }
+.strip-reading small { font-size: 11px; font-weight: 400; }
+.strip-reading .lucide { width: 12px; height: 12px; align-self: center; margin-left: 2px; }
+.strip-empty { width: 100%; gap: 10px; justify-content: center; font-size: 12px; }
+@media (max-width: 340px) { .strip-device { gap: 4px; padding: 3px 3px; } .strip-photo { width: 29px; } .strip-reading { font-size: 19px; } }

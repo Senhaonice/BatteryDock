@@ -5,7 +5,7 @@ const { _electron: electron } = require('playwright-core');
 const root = path.join(__dirname, '..');
 const reportDirectory = path.join(root, '..', 'verification');
 fs.mkdirSync(reportDirectory, { recursive: true });
-const profile = path.join(reportDirectory, 'test-profile');
+const profile = path.join(reportDirectory, `test-profile-${process.pid}`);
 const env = { ...process.env, BATTERY_DOCK_TEST:'1',BATTERY_DOCK_TEST_PROFILE:profile };
 delete env.ELECTRON_RUN_AS_NODE;
 const executable = process.env.BATTERY_DOCK_EXECUTABLE;
@@ -16,7 +16,7 @@ async function launch(silent = false) {
   return electron.launch(options);
 }
 async function settle(app) {
-  for(let i=0;i<60;i++) {
+  for(let i=0;i<160;i++) {
     const value=await app.evaluate(()=>globalThis.batteryTest?.state());
     if(value?.pollAt && !value.refreshing) return value;
     await new Promise(resolve=>setTimeout(resolve,150));
@@ -26,6 +26,14 @@ async function settle(app) {
 async function save(page,patch) {
   await page.evaluate(patch=>window.battery.settings(patch),patch);
 }
+async function panelPage(app) {
+  for (let i=0;i<100;i++) {
+    const page=app.windows().find(page=>page.url().endsWith('/index.html'));
+    if (page) return page;
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  throw new Error('Panel window did not load');
+}
 
 async function main() {
   let app;
@@ -33,10 +41,28 @@ async function main() {
   const report={ executable:executable || 'development',checks:[] };
   try {
     app=await launch();
-    const page=await app.firstWindow();
+    const page=await panelPage(app);
     page.on('pageerror',e=>errors.push(e.message));
     await page.waitForSelector('.panel');
     report.hardware=await settle(app);
+    assert.equal(report.hardware.settings.strip,true);
+    assert.equal(await app.evaluate(()=>globalThis.batteryTest.trayCount()),1);
+    for(let i=0;i<60 && !(await app.evaluate(()=>globalThis.batteryTest.strip()?.visible));i++) await new Promise(resolve=>setTimeout(resolve,100));
+    const strip=app.windows().find(page=>page.url().endsWith('/strip.html'));
+    assert.ok(strip);
+    await strip.waitForSelector('.strip-device');
+    assert.equal(await strip.locator('.strip-device').count(),3);
+    assert.equal(await strip.locator('img').evaluateAll(images=>images.every(img=>img.complete && img.naturalWidth>0)),true);
+    const geometry=await app.evaluate(({BrowserWindow,screen})=>{
+      const panel=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html'));
+      return { panel:panel.getBounds(),strip:globalThis.batteryTest.strip().bounds,work:screen.getPrimaryDisplay().workArea };
+    });
+    assert.ok(geometry.strip.y+geometry.strip.height<=geometry.work.y+geometry.work.height);
+    assert.ok(geometry.panel.y+geometry.panel.height<=geometry.strip.y+2);
+    report.checks.push('Default strip shows three local photos above taskbar with one application tray entry; panel clears strip');
+    await strip.screenshot({path:path.join(reportDirectory,'strip-live.png')});
+    await save(page,{strip:false});
+    assert.equal(await app.evaluate(()=>globalThis.batteryTest.strip().visible),false);
     assert.equal(await app.evaluate(()=>globalThis.batteryTest.trayCount()),2);
     const identities=await app.evaluate(()=>globalThis.batteryTest.trayIdentity());
     assert.deepEqual(identities.map(x=>x.id).sort(),['keyboard','mouse']);
@@ -45,10 +71,10 @@ async function main() {
     await page.screenshot({path:path.join(reportDirectory,'widget-live.png')});
     await page.getByRole('button',{name:'LeoBog HI75C Pro，查看详情',exact:true}).click();
     assert.equal(await page.locator('h1').innerText(),'LeoBog HI75C Pro');
-    await page.getByRole('switch',{name:'显示在托盘',exact:true}).uncheck();
+    await page.getByRole('switch',{name:'显示此设备',exact:true}).uncheck();
     await page.waitForFunction(()=>!document.querySelector('[data-visible]').disabled);
     assert.equal(await app.evaluate(()=>globalThis.batteryTest.trayCount()),1);
-    await page.getByRole('switch',{name:'显示在托盘',exact:true}).check();
+    await page.getByRole('switch',{name:'显示此设备',exact:true}).check();
     await page.waitForFunction(()=>!document.querySelector('[data-visible]').disabled);
     assert.deepEqual((await app.evaluate(()=>globalThis.batteryTest.trayIdentity())).map(({id,guid})=>({id,guid})),identities.map(({id,guid})=>({id,guid})));
     report.checks.push('Device-specific tray identities survive icon recreation');
@@ -68,10 +94,10 @@ async function main() {
     await page.getByRole('button',{name:'深色',exact:true}).click();
     await page.waitForFunction(()=>document.documentElement.style.colorScheme==='dark');
     await page.waitForFunction(()=>!document.getElementById('numbers').disabled);
-    const boundsBeforeStartup=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
+    const boundsBeforeStartup=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html')).getBounds());
     await page.getByRole('switch',{name:'开机静默自启',exact:true}).check();
     await page.waitForFunction(()=>!document.getElementById('autostart').disabled);
-    assert.deepEqual(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds()),boundsBeforeStartup);
+    assert.deepEqual(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html')).getBounds()),boundsBeforeStartup);
     const startup=await app.evaluate(()=>globalThis.batteryTest.login());
     assert.equal(startup.enabled,true);
     assert.ok(startup.command.endsWith('--silent'));
@@ -82,11 +108,12 @@ async function main() {
     await page.waitForSelector('.devices .device');
     assert.equal(await page.locator('.devices .device').count(),3);
     assert.equal(await page.locator('.grid').count(),0);
+    assert.equal(await page.locator('h1').innerText(),'设置');
+    assert.equal(await page.locator('.device-information .device-section').count(),3);
+    assert.equal(await page.locator('.device-information .property').count(),34);
     await page.screenshot({path:path.join(reportDirectory,'list-live-dark.png')});
-    await page.getByRole('button',{name:'设置',exact:true}).click();
     await page.getByRole('button',{name:'设备列表',exact:true}).click();
     await page.waitForSelector('.devices .device');
-    await page.getByRole('button',{name:'设置',exact:true}).click();
     await page.getByRole('button',{name:'电池小组件',exact:true}).click();
     await page.waitForSelector('.grid .grid-device');
     assert.equal(await page.locator('.grid .grid-device').count(),3);
@@ -94,14 +121,14 @@ async function main() {
     await page.getByRole('button',{name:'设置',exact:true}).click();
     await page.getByRole('button',{name:'设备列表',exact:true}).click();
     await page.waitForSelector('.devices .device');
-    await page.getByRole('button',{name:'设置',exact:true}).click();
-    report.checks.push('Selecting either layout immediately displays it, including switching back and selecting the saved layout');
+    assert.equal(await page.locator('h1').innerText(),'设置');
+    report.checks.push('Device list remains inline in Settings with all three photos and 34 information rows; battery widget opens its panel');
     await page.waitForFunction(()=>!document.getElementById('numbers').disabled);
     await page.getByRole('slider',{name:'提醒阈值',exact:true}).fill('25');
     await page.waitForFunction(()=>!document.getElementById('numbers').disabled);
     await page.screenshot({path:path.join(reportDirectory,'settings-dark.png')});
     await page.getByRole('button',{name:'返回电量面板',exact:true}).click();
-    await page.screenshot({path:path.join(reportDirectory,'list-live-dark.png')});
+    await page.screenshot({path:path.join(reportDirectory,'widget-live-dark.png')});
     await app.evaluate(()=>globalThis.batteryTest.hide());
     await app.close();app=null;
     app=await launch(true);
@@ -115,14 +142,24 @@ async function main() {
     report.checks.push('Tray identities survive silent relaunch at the same executable path');
     report.checks.push('Silent relaunch creates tray icons and polls hardware with no visible window');
     report.checks.push('Theme, layout and threshold survive relaunch');
+    await app.evaluate(()=>globalThis.batteryTest.setSettings({strip:true}));
+    for(let i=0;i<60 && !(await app.evaluate(()=>globalThis.batteryTest.strip()?.visible));i++) await new Promise(resolve=>setTimeout(resolve,100));
+    assert.equal(await app.evaluate(()=>globalThis.batteryTest.strip().visible),true);
+    const restoredStrip=app.windows().find(page=>page.url().endsWith('/strip.html'));
+    await restoredStrip.locator('.strip-device').first().click();
+    const reopened=await panelPage(app);
+    await reopened.waitForSelector('.panel');
+    assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html')).isVisible()),true);
+    assert.equal(await app.evaluate(()=>globalThis.batteryTest.trayCount()),1);
+    report.checks.push('Strip preference toggles independently; clicking a strip device opens the panel after silent launch');
     await app.evaluate(()=>globalThis.batteryTest.setSettings({autostart:false}));
     assert.equal((await app.evaluate(()=>globalThis.batteryTest.login())).enabled,false);
     report.checks.push('Turning off startup removes test login item');
     await app.evaluate(()=>globalThis.batteryTest.show());
-    const second=await app.firstWindow();
+    const second=await panelPage(app);
     await save(second,{theme:'system',layout:'widget',threshold:20,numbers:true,visible:{mouse:true,keyboard:true}});
     for (const width of [400,340]) {
-      await app.evaluate(({BrowserWindow},width)=>{const w=BrowserWindow.getAllWindows()[0];w.setSize(width,w.getSize()[1]);},width);
+      await app.evaluate(({BrowserWindow},width)=>{const w=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html'));w.setSize(width,w.getSize()[1]);},width);
       const layout=await second.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));
       assert.ok(layout.scroll<=layout.width);
     }

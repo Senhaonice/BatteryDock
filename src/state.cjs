@@ -1,15 +1,15 @@
 const { DEFINITIONS } = require('./protocol.cjs');
 
-const DEFAULTS = Object.freeze({ theme: 'system', layout: 'widget', numbers: true, alerts: true, threshold: 20, refresh: 10, autostart: false, visible: { mouse: true, keyboard: true } });
+const DEFAULTS = Object.freeze({ theme: 'system', layout: 'widget', strip: true, numbers: true, alerts: true, threshold: 20, refresh: 10, autostart: false, visible: { mouse: true, keyboard: true, controller: true } });
 
 function normalize(input = {}, current = DEFAULTS) {
   const next = { ...DEFAULTS, ...current, visible: { ...DEFAULTS.visible, ...current.visible } };
   if (['system', 'light', 'dark'].includes(input.theme)) next.theme = input.theme;
   if (['widget', 'list'].includes(input.layout)) next.layout = input.layout;
-  for (const key of ['numbers', 'alerts', 'autostart']) if (typeof input[key] === 'boolean') next[key] = input[key];
+  for (const key of ['strip', 'numbers', 'alerts', 'autostart']) if (typeof input[key] === 'boolean') next[key] = input[key];
   if (Number.isInteger(input.threshold) && input.threshold >= 5 && input.threshold <= 40 && input.threshold % 5 === 0) next.threshold = input.threshold;
   if ([10, 30, 60].includes(input.refresh)) next.refresh = input.refresh;
-  if (input.visible && typeof input.visible === 'object') for (const key of ['mouse', 'keyboard']) if (typeof input.visible[key] === 'boolean') next.visible[key] = input.visible[key];
+  if (input.visible && typeof input.visible === 'object') for (const key of ['mouse', 'keyboard', 'controller']) if (typeof input.visible[key] === 'boolean') next.visible[key] = input.visible[key];
   return next;
 }
 

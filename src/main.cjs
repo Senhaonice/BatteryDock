@@ -2,10 +2,12 @@ const { app, BrowserWindow, Menu, Tray, nativeImage, nativeTheme, screen, ipcMai
 const fs = require('node:fs');
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
+const { createInterface } = require('node:readline');
 const { normalize, initialDevices, mergeReadings, notificationBucket } = require('./state.cjs');
 const { executableForLogin, loginOptions, enabledFrom } = require('./startup.cjs');
 const { trayGuid, trayAsset } = require('./tray.cjs');
+const { stripDevices, stripBounds, taskbarWorkArea } = require('./strip.cjs');
 
 const testMode = process.env.BATTERY_DOCK_TEST === '1';
 if (testMode) {
@@ -20,6 +22,8 @@ if (testMode && !app.isPackaged) loginConfig.args.unshift(app.getAppPath());
 let settings = normalize();
 let devices = initialDevices();
 let panel = null;
+let strip = null;
+let stripLoading = null;
 let worker = null;
 let pollTimer = null;
 let watchdog = null;
@@ -31,6 +35,12 @@ let startedAt = Date.now();
 let lastAnchor = null;
 let busyMenu = false;
 let lastPanelSize = null;
+let lastPanelPosition = null;
+let lastStripBounds = null;
+let taskbarState = null;
+let taskbarTestOverride = false;
+let taskbarWatcher = null;
+let taskbarRestart = null;
 const trays = new Map();
 const notified = new Map();
 const assetPath = (...parts) => path.join(__dirname, '..', 'assets', ...parts);
@@ -83,6 +93,7 @@ function snapshot() {
 
 function broadcast() {
   if (panel && !panel.isDestroyed()) panel.webContents.send('battery:state', snapshot());
+  if (strip && !strip.isDestroyed()) strip.webContents.send('battery:state', snapshot());
 }
 
 function relativeStatus(d) {
@@ -104,6 +115,7 @@ function contextMenu() {
   return Menu.buildFromTemplate([
     { label: '打开电量面板', click: () => showPanel(lastAnchor) },
     { label: '立即刷新', enabled: !refreshing, click: () => poll() },
+    { label: '显示电量条', type: 'checkbox', checked: settings.strip, click: item => { try { updateSettings({ strip: item.checked }); } catch (e) { showError(e.message); } } },
     { type: 'separator' },
     ...devices.map(d => ({ label: `${d.name}  ${relativeStatus(d)}`, enabled: false })),
     { type: 'separator' },
@@ -119,7 +131,7 @@ function showError(body) {
 }
 
 function syncTrays() {
-  const shown = devices.filter(d => settings.visible[d.id]);
+  const shown = settings.strip ? [] : devices.filter(d => d.id !== 'controller' && settings.visible[d.id]);
   const desired = shown.length ? shown : [{ id: 'app', name: 'BatteryDock', short: '电量', status: 'idle' }];
   for (const [id, item] of trays) if (!desired.some(d => d.id === id)) { item.destroy(); trays.delete(id); }
   for (const d of desired) {
@@ -146,19 +158,92 @@ function syncTrays() {
   }
 }
 
+function positionStrip() {
+  if (!strip || strip.isDestroyed()) return;
+  const work = taskbarWorkArea(screen.getPrimaryDisplay(), taskbarState);
+  const bounds = stripBounds(work, stripDevices(devices, settings).length);
+  if (!lastStripBounds || Object.keys(bounds).some(key => bounds[key] !== lastStripBounds[key])) {
+    lastStripBounds = bounds;
+    strip.setBounds(bounds, false);
+  }
+  if (lastAnchor?.strip && panel?.isVisible()) positionPanel(lastAnchor);
+}
+
+function startTaskbarWatcher() {
+  if (quitting || taskbarWatcher) return;
+  const executable = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const watcherPath = path.join(__dirname, 'taskbar-watch.ps1').replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
+  const child = spawn(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', watcherPath], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  taskbarWatcher = child;
+  const lines = createInterface({ input: child.stdout });
+  lines.on('line', line => {
+    try {
+      if (testMode && taskbarTestOverride) return;
+      const value = JSON.parse(line);
+      if (typeof value.autoHide !== 'boolean' || ![value.rect,value.bounds].every(rect => rect && ['x','y','width','height'].every(key => Number.isFinite(rect[key])))) return;
+      taskbarState = { ...value, rect: screen.screenToDipRect(null, value.rect), bounds: screen.screenToDipRect(null, value.bounds) };
+      positionStrip();
+      if (!strip?.isVisible() && panel?.isVisible()) {
+        const work = taskbarWorkArea(screen.getPrimaryDisplay(), taskbarState);
+        lastAnchor = { x: work.x + work.width - 24, y: work.y + work.height, width: 16, height: 0 };
+        positionPanel(lastAnchor);
+      }
+    } catch {}
+  });
+  child.stderr.on('data', data => log('Taskbar watcher: ' + String(data).slice(0, 1000)));
+  child.on('error', log);
+  child.on('close', () => {
+    lines.close();
+    if (taskbarWatcher === child) taskbarWatcher = null;
+    if (!quitting) taskbarRestart = setTimeout(startTaskbarWatcher, 10000);
+  });
+}
+
+async function syncStrip() {
+  if (!settings.strip) { strip?.hide(); return; }
+  if (stripLoading) { await stripLoading; return; }
+  if (!strip || strip.isDestroyed()) {
+    strip = new BrowserWindow({
+      ...stripBounds(taskbarWorkArea(screen.getPrimaryDisplay(), taskbarState), stripDevices(devices, settings).length),
+      show: false, useContentSize: true, frame: false, transparent: true, backgroundColor: '#00000000',
+      resizable: false, maximizable: false, minimizable: false, skipTaskbar: true, alwaysOnTop: true,
+      hasShadow: false, autoHideMenuBar: true, title: 'BatteryDock Battery Strip', icon: assetPath('app.ico'),
+      webPreferences: { preload: path.join(__dirname, 'strip-preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, devTools: testMode }
+    });
+    strip.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    strip.webContents.on('will-navigate', event => event.preventDefault());
+    strip.on('close', event => { if (!quitting) event.preventDefault(); });
+    strip.on('closed', () => { strip = null; lastStripBounds = null; });
+    stripLoading = strip.loadFile(path.join(__dirname, 'strip.html'));
+    try { await stripLoading; } finally { stripLoading = null; }
+  }
+  if (quitting || !settings.strip || !strip || strip.isDestroyed()) return;
+  positionStrip();
+  strip.webContents.send('battery:state', snapshot());
+  strip.showInactive();
+  if (panel?.isVisible()) {
+    lastAnchor = { ...strip.getBounds(), strip: true };
+    positionPanel(lastAnchor);
+  }
+}
+
 function positionPanel(anchor) {
   if (!panel) return;
+  if (anchor?.strip && strip && !strip.isDestroyed()) anchor = { ...strip.getBounds(), strip: true };
   const point = anchor?.width ? { x: anchor.x, y: anchor.y } : screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(point);
-  const work = display.workArea;
-  const [width, height] = panel.getSize();
+  const work = display.id === screen.getPrimaryDisplay().id ? taskbarWorkArea(display, taskbarState) : display.workArea;
+  const [width, height] = lastPanelSize ? [lastPanelSize.width, lastPanelSize.height] : panel.getSize();
   const source = anchor?.width ? anchor : { x: work.x + work.width - 24, y: work.y + work.height, width: 16, height: 0 };
   let x = source.x + source.width - width + 10;
   let y = source.y - height - 3;
   if (source.y < work.y + 30) y = source.y + source.height + 3;
   x = Math.round(Math.max(work.x, Math.min(x, work.x + work.width - width)));
   y = Math.round(Math.max(work.y, Math.min(y, work.y + work.height - height)));
-  panel.setPosition(x, y, false);
+  if (lastPanelPosition?.x === x && lastPanelPosition?.y === y) return;
+  lastPanelPosition = { x, y };
+  // Reapply requested dimensions when moving: Windows may round a fractional-DPI move as a resize.
+  panel.setBounds({ x, y, width, height }, false);
 }
 
 async function createPanel() {
@@ -174,7 +259,7 @@ async function createPanel() {
   panel.webContents.on('will-navigate', event => event.preventDefault());
   panel.on('blur', () => { if (!busyMenu && !testMode) panel?.hide(); });
   panel.on('close', event => { if (!quitting) { event.preventDefault(); panel.hide(); } });
-  panel.on('closed', () => { panel = null; lastPanelSize = null; });
+  panel.on('closed', () => { panel = null; lastPanelSize = null; lastPanelPosition = null; });
   await panel.loadFile(path.join(__dirname, 'index.html'));
   broadcast();
   return panel;
@@ -182,8 +267,9 @@ async function createPanel() {
 
 async function showPanel(anchor, view = 'main') {
   try {
+    if (settings.strip) await syncStrip();
     await createPanel();
-    const bounds = anchor || lastTray?.getBounds();
+    const bounds = strip?.isVisible() ? { ...strip.getBounds(), strip: true } : anchor || lastTray?.getBounds();
     lastAnchor = bounds ? { ...bounds } : null;
     positionPanel(lastAnchor);
     panel.webContents.send('battery:view', view);
@@ -266,19 +352,30 @@ function updateSettings(patch) {
   settings = next;
   nativeTheme.themeSource = settings.theme;
   saveSettings(); syncTrays(); broadcast();
+  void syncStrip().catch(log);
   if (!refreshing) schedulePoll();
   return snapshot();
 }
 
 function fromPanel(event) { return panel && event.sender === panel.webContents; }
-ipcMain.handle('battery:get', event => { if (!fromPanel(event)) throw new Error('Invalid sender'); return snapshot(); });
+function fromStrip(event) { return strip && event.sender === strip.webContents; }
+ipcMain.handle('battery:get', event => { if (!fromPanel(event) && !fromStrip(event)) throw new Error('Invalid sender'); return snapshot(); });
+ipcMain.on('battery:open', event => { if (fromStrip(event)) void showPanel({ ...strip.getBounds(), strip: true }); });
+ipcMain.on('battery:menu', event => {
+  if (!fromStrip(event)) return;
+  lastAnchor = { ...strip.getBounds(), strip: true };
+  busyMenu = true;
+  contextMenu().popup({ window: strip, callback: () => { busyMenu = false; } });
+});
 ipcMain.handle('battery:settings', (event, patch) => { if (!fromPanel(event) || !patch || typeof patch !== 'object') throw new Error('Invalid settings'); return updateSettings(patch); });
 ipcMain.handle('battery:refresh', event => { if (!fromPanel(event)) return; poll(); });
 ipcMain.on('battery:hide', event => { if (fromPanel(event)) panel.hide(); });
 ipcMain.on('battery:resize', (event, height) => {
   if (!fromPanel(event) || !Number.isFinite(height)) return;
-  const work = screen.getDisplayNearestPoint(lastAnchor || screen.getCursorScreenPoint()).workArea;
-  const size = { width: Math.min(400, work.width), height: Math.max(180, Math.min(Math.ceil(height), work.height - 8)) };
+  const display = screen.getDisplayNearestPoint(lastAnchor || screen.getCursorScreenPoint());
+  const work = display.id === screen.getPrimaryDisplay().id ? taskbarWorkArea(display, taskbarState) : display.workArea;
+  const availableHeight = lastAnchor?.strip && strip?.isVisible() ? strip.getBounds().y - work.y - 3 : work.height - 8;
+  const size = { width: Math.min(400, work.width), height: Math.max(180, Math.min(Math.ceil(height), availableHeight)) };
   // At fractional DPI, repeating a native resize can accumulate rounding errors.
   if (lastPanelSize?.width === size.width && lastPanelSize?.height === size.height) return;
   lastPanelSize = size;
@@ -298,6 +395,8 @@ else {
   app.on('before-quit', () => {
     quitting = true;
     clearTimeout(pollTimer); clearTimeout(watchdog);
+    clearTimeout(taskbarRestart);
+    taskbarWatcher?.kill();
     worker?.terminate();
     for (const item of trays.values()) item.destroy();
     trays.clear();
@@ -308,7 +407,11 @@ else {
     try { settings = normalize(JSON.parse(fs.readFileSync(settingsPath(), 'utf8'))); } catch {}
     settings.autostart = startupEnabled();
     nativeTheme.themeSource = settings.theme;
-    syncTrays(); poll();
+    syncTrays(); void syncStrip().catch(log); startTaskbarWatcher(); poll();
+    const displaysChanged = () => { positionStrip(); if (panel?.isVisible()) positionPanel(lastAnchor); };
+    screen.on('display-metrics-changed', displaysChanged);
+    screen.on('display-added', displaysChanged);
+    screen.on('display-removed', displaysChanged);
     nativeTheme.on('updated', () => { syncTrays(); broadcast(); });
     powerMonitor.on('resume', () => { startedAt = Date.now(); schedulePoll(2000); });
     if (!process.argv.includes('--silent')) showPanel(lastAnchor);
@@ -320,7 +423,12 @@ else {
         login: () => ({ name: loginName, options: loginConfig, command: startupCommand(), enabled: startupEnabled(), actual: app.getLoginItemSettings(loginConfig) }),
         trayCount: () => trays.size,
         trayIdentity: () => [...trays].map(([id, tray]) => ({ id, guid: tray.getGUID(), image: trayAsset(devices.find(d => d.id === id) || { id: 'app' }, settings.numbers, 'light') })),
-        hide: () => panel?.hide()
+        hide: () => panel?.hide(),
+        strip: () => strip && !strip.isDestroyed() ? { visible: strip.isVisible(), bounds: strip.getBounds() } : null,
+        setDevices: readings => { devices = mergeReadings(devices, readings); syncTrays(); broadcast(); },
+        positionStrip,
+        taskbar: () => taskbarState,
+        setTaskbar: value => { taskbarTestOverride = value !== null; taskbarState = value; positionStrip(); }
       };
     }
   }).catch(error => { log(error); app.quit(); });
