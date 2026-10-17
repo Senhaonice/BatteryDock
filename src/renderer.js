@@ -88,18 +88,25 @@
     if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
     resize();
   }
-  async function save(patch) {
+  async function save(patch, showMain = false) {
     saving = true;
     message = '';
     state.settings = { ...state.settings, ...patch, visible: { ...state.settings.visible, ...patch.visible } };
     render();
-    try { state = await window.battery.settings(patch); }
+    try {
+      state = await window.battery.settings(patch);
+      if (showMain) view = 'main';
+    }
     catch (e) { state = await window.battery.state(); message = e.message.replace(/^Error invoking remote method '[^']+': Error: /,''); }
     finally { saving = false; render(); }
   }
   app.addEventListener('click', event => {
     const preference = event.target.closest('[data-pref-button]');
-    if (preference) { void save({ [preference.dataset.prefButton]: preference.dataset.value }); return; }
+    if (preference) {
+      const key = preference.dataset.prefButton;
+      void save({ [key]: preference.dataset.value }, key === 'layout');
+      return;
+    }
     const control = event.target.closest('[data-action]');
     if (!control) return;
     message = '';

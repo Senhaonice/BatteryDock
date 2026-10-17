@@ -25,7 +25,7 @@ async function geometry(application, page) {
 
 async function run(scale) {
   let application;
-  const record = { scale, samples: [], errors: [] };
+  const record = { scale, samples: [], layouts: [], errors: [] };
   try {
     const env = { ...process.env, BATTERY_DOCK_TEST: '1', BATTERY_DOCK_TEST_PROFILE: path.join(directory, `ui-${process.pid}-${scale}`) };
     delete env.ELECTRON_RUN_AS_NODE;
@@ -40,7 +40,20 @@ async function run(scale) {
     await wait(450);
     record.initial = await geometry(application, page);
     const actions = [
-      ...['浅色', '深色', '跟随系统', '设备列表', '电池小组件'].map(name => ({ name, run: () => page.getByRole('button', { name, exact: true }).click() })),
+      ...['浅色', '深色', '跟随系统'].map(name => ({ name, run: () => page.getByRole('button', { name, exact: true }).click() })),
+      ...[['设备列表', 'list', '.devices .device'], ['电池小组件', 'widget', '.grid .grid-device']].map(([name, layout, selector]) => ({
+        name,
+        run: async () => {
+          await page.getByRole('button', { name, exact: true }).click();
+          await page.waitForSelector(selector, { timeout: 3000 });
+          assert.equal(await page.locator(selector).count(), 3);
+          assert.equal(await application.evaluate(() => globalThis.batteryTest.state().settings.layout), layout);
+          record.layouts.push({ layout, visibleDevices: 3 });
+          await page.screenshot({ path: path.join(directory, `${layout}-${scale}.png`) });
+          await page.getByRole('button', { name: '设置', exact: true }).click();
+          await page.waitForSelector('#numbers');
+        }
+      })),
       { name: 'numbers off', run: () => page.locator('#numbers').uncheck() },
       { name: 'numbers on', run: () => page.locator('#numbers').check() },
       { name: 'alerts off', run: () => page.locator('#alerts').uncheck() },

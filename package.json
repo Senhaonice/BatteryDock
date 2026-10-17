@@ -1,6 +1,6 @@
 {
   "name": "battery-dock",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Wireless device battery tray monitor for Windows",
   "author": "BatteryDock",
   "license": "MIT",

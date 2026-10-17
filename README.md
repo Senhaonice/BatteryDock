@@ -26,6 +26,8 @@ npm run pack
 
 `test:ui` checks repeated settings interactions and navigation at 100%, 125%, 150% and 200% DPI. Window sizing uses intrinsic panel height and caches the last requested content size to prevent fractional-DPI resize feedback.
 
+Choosing either panel layout saves the preference and immediately returns to the selected main view. A failed save keeps the settings view open with an error. UI checks assert the visible device list or widget grid, in addition to the stored preference.
+
 ## Tray Visibility
 
 Each device has its own icon plus percentage and a stable GUID tied to the executable path. Windows controls whether a notification icon appears on the taskbar or in the overflow. Use the taskbar settings button in Settings, or drag each BatteryDock icon from the overflow onto the taskbar once. Keep the installation path stable so Windows can retain that selection. Portable extraction uses a stable directory for the same reason.
