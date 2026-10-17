@@ -1,0 +1,319 @@
+const { app, BrowserWindow, Menu, Tray, nativeImage, nativeTheme, screen, ipcMain, Notification, powerMonitor, shell } = require('electron');
+const fs = require('node:fs');
+const path = require('node:path');
+const { Worker } = require('node:worker_threads');
+const { execFileSync } = require('node:child_process');
+const { normalize, initialDevices, mergeReadings, notificationBucket } = require('./state.cjs');
+const { executableForLogin, loginOptions, enabledFrom } = require('./startup.cjs');
+
+const testMode = process.env.BATTERY_DOCK_TEST === '1';
+if (testMode) {
+  if (!process.env.BATTERY_DOCK_TEST_PROFILE) throw new Error('Test profile required');
+  app.setPath('userData', process.env.BATTERY_DOCK_TEST_PROFILE);
+}
+app.setName('BatteryDock');
+const loginName = testMode ? 'BatteryDock_Test' : 'BatteryDock';
+const loginExecutable = executableForLogin();
+const loginConfig = loginOptions(loginExecutable, loginName);
+if (testMode && !app.isPackaged) loginConfig.args.unshift(app.getAppPath());
+let settings = normalize();
+let devices = initialDevices();
+let panel = null;
+let worker = null;
+let pollTimer = null;
+let watchdog = null;
+let refreshing = false;
+let quitting = false;
+let pollAt = null;
+let lastTray = null;
+let startedAt = Date.now();
+let lastAnchor = null;
+let busyMenu = false;
+const trays = new Map();
+const notified = new Map();
+const assetPath = (...parts) => path.join(__dirname, '..', 'assets', ...parts);
+const settingsPath = () => path.join(app.getPath('userData'), 'settings.json');
+
+function log(error) {
+  try {
+    const file = path.join(app.getPath('userData'), 'app.log');
+    if (fs.existsSync(file) && fs.statSync(file).size > 200000) fs.renameSync(file, file + '.old');
+    fs.appendFileSync(file, `${new Date().toISOString()} ${String(error?.stack || error)}\n`);
+  } catch {}
+}
+
+function startupCommand() {
+  try {
+    const output = execFileSync('reg.exe', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', '/v', loginName], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: 3000 });
+    return output.match(/REG_SZ\s+(.+)/)?.[1].trim() || '';
+  } catch { return ''; }
+}
+
+function startupEnabled() {
+  try {
+    const info = app.getLoginItemSettings(loginConfig);
+    const entry = info.launchItems?.find(item => item.name === loginName);
+    const command = startupCommand();
+    const expected = `"${loginExecutable}" ${loginConfig.args.map(arg => arg === '--silent' ? arg : `"${arg}"`).join(' ')}`;
+    return Boolean(entry?.enabled && command.toLowerCase() === expected.toLowerCase());
+  }
+  catch (error) { log(error); return false; }
+}
+
+function setStartup(enabled) {
+  if (!app.isPackaged && !testMode) throw new Error('请在封包版本中设置开机自启');
+  app.setLoginItemSettings({ ...loginConfig, openAtLogin: enabled, enabled });
+  const actual = startupEnabled();
+  if (actual !== enabled) throw new Error('开机启动项未生效，请检查 Windows 启动应用设置');
+  return actual;
+}
+
+function saveSettings() {
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  const file = settingsPath();
+  fs.writeFileSync(file + '.tmp', JSON.stringify(settings, null, 2), 'utf8');
+  fs.renameSync(file + '.tmp', file);
+}
+
+function snapshot() {
+  return { settings, devices, refreshing, pollAt, version: app.getVersion(), themeDark: nativeTheme.shouldUseDarkColors, autostartSupported: app.isPackaged || testMode };
+}
+
+function broadcast() {
+  if (panel && !panel.isDestroyed()) panel.webContents.send('battery:state', snapshot());
+}
+
+function relativeStatus(d) {
+  if (d.status === 'loading') return '读取中';
+  if (d.status === 'unsupported') return '暂不支持读取';
+  if (d.status === 'disconnected') return '接收器未连接';
+  if (d.status !== 'fresh') return '休眠或暂不可读';
+  return `${d.percentage}%${d.charging ? ' · 充电中' : ''}`;
+}
+
+function trayImage(d) {
+  const theme = nativeTheme.shouldUseDarkColorsForSystemIntegratedUI ? 'dark' : 'light';
+  const key = settings.numbers && d.status === 'fresh' && Number.isInteger(d.percentage) ? String(d.percentage) : d.id;
+  let image = nativeImage.createFromPath(assetPath('tray', `${theme}-${key}.png`));
+  if (image.isEmpty()) image = nativeImage.createFromPath(assetPath('app.png'));
+  return image;
+}
+
+function contextMenu() {
+  return Menu.buildFromTemplate([
+    { label: '打开电量面板', click: () => showPanel(lastAnchor) },
+    { label: '立即刷新', enabled: !refreshing, click: () => poll() },
+    { type: 'separator' },
+    ...devices.map(d => ({ label: `${d.name}  ${relativeStatus(d)}`, enabled: false })),
+    { type: 'separator' },
+    { label: '开机静默自启', type: 'checkbox', checked: settings.autostart, click: item => { try { updateSettings({ autostart: item.checked }); } catch (e) { showError(e.message); } } },
+    { label: '设置', click: () => showPanel(lastAnchor, 'settings') },
+    { label: '退出 BatteryDock', click: () => app.quit() }
+  ]);
+}
+
+function showError(body) {
+  if (Notification.isSupported()) new Notification({ title: 'BatteryDock', body, icon: assetPath('app.png') }).show();
+}
+
+function syncTrays() {
+  const shown = devices.filter(d => settings.visible[d.id]);
+  const desired = shown.length ? shown : [{ id: 'app', name: 'BatteryDock', short: '电量', status: 'idle' }];
+  for (const [id, item] of trays) if (!desired.some(d => d.id === id)) { item.destroy(); trays.delete(id); }
+  for (const d of desired) {
+    let item = trays.get(d.id);
+    if (!item) {
+      item = new Tray(trayImage(d));
+      trays.set(d.id, item);
+      item.on('click', (_event, bounds) => {
+        lastTray = item;
+        lastAnchor = bounds;
+        if (panel?.isVisible()) panel.hide(); else showPanel(bounds);
+      });
+      item.on('right-click', () => {
+        lastTray = item;
+        lastAnchor = item.getBounds();
+        busyMenu = true;
+        item.popUpContextMenu(contextMenu());
+        setTimeout(() => { busyMenu = false; }, 200);
+      });
+    }
+    item.setImage(trayImage(d));
+    const old = d.observedAt && d.status !== 'fresh' ? `\n上次读取：${d.percentage}% · ${new Date(d.observedAt).toLocaleTimeString('zh-CN')}` : '';
+    item.setToolTip(d.id === 'app' ? 'BatteryDock · 设备电量' : `${d.name}\n${relativeStatus(d)}${old}`);
+  }
+}
+
+function positionPanel(anchor) {
+  if (!panel) return;
+  const point = anchor?.width ? { x: anchor.x, y: anchor.y } : screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(point);
+  const work = display.workArea;
+  const [width, height] = panel.getSize();
+  const source = anchor?.width ? anchor : { x: work.x + work.width - 24, y: work.y + work.height, width: 16, height: 0 };
+  let x = source.x + source.width - width + 10;
+  let y = source.y - height - 3;
+  if (source.y < work.y + 30) y = source.y + source.height + 3;
+  x = Math.round(Math.max(work.x, Math.min(x, work.x + work.width - width)));
+  y = Math.round(Math.max(work.y, Math.min(y, work.y + work.height - height)));
+  panel.setPosition(x, y, false);
+}
+
+async function createPanel() {
+  if (panel && !panel.isDestroyed()) return panel;
+  panel = new BrowserWindow({
+    width: 400, height: 440, minWidth: 340, minHeight: 180, show: false,
+    frame: false, transparent: true, backgroundColor: '#00000000', resizable: false,
+    maximizable: false, minimizable: false, skipTaskbar: true, alwaysOnTop: true,
+    hasShadow: false, autoHideMenuBar: true, title: 'BatteryDock', icon: assetPath('app.ico'),
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, devTools: testMode }
+  });
+  panel.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  panel.webContents.on('will-navigate', event => event.preventDefault());
+  panel.on('blur', () => { if (!busyMenu && !testMode) panel?.hide(); });
+  panel.on('close', event => { if (!quitting) { event.preventDefault(); panel.hide(); } });
+  panel.on('closed', () => { panel = null; });
+  await panel.loadFile(path.join(__dirname, 'index.html'));
+  broadcast();
+  return panel;
+}
+
+async function showPanel(anchor, view = 'main') {
+  try {
+    await createPanel();
+    lastAnchor = anchor || lastTray?.getBounds();
+    positionPanel(lastAnchor);
+    panel.webContents.send('battery:view', view);
+    broadcast();
+    panel.show();
+    panel.focus();
+    if (!refreshing && (!pollAt || Date.now() - pollAt > 3000)) poll();
+  } catch (e) { log(e); }
+}
+
+function notifyLowBatteries() {
+  for (const d of devices) {
+    const bucket = notificationBucket(d, settings.threshold);
+    if (d.status === 'fresh' && (d.charging || d.percentage > settings.threshold)) notified.delete(d.id);
+    if (bucket === null || !settings.alerts || testMode || Date.now() - startedAt < 60000) continue;
+    const previous = notified.get(d.id);
+    if (previous !== undefined && bucket >= previous) continue;
+    notified.set(d.id, bucket);
+    if (Notification.isSupported()) {
+      const notification = new Notification({ title: `${d.name} 电量偏低`, body: `剩余 ${d.percentage}%，请及时充电。`, icon: assetPath('app.png'), silent: true });
+      notification.on('click', () => showPanel(lastAnchor));
+      notification.show();
+    }
+  }
+}
+
+function schedulePoll(delay = settings.refresh * 1000) {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(poll, delay);
+}
+
+function createWorker() {
+  const owned = new Worker(path.join(__dirname, 'hid-worker.cjs'));
+  worker = owned;
+  owned.on('message', result => {
+    if (worker !== owned || quitting) return;
+    clearTimeout(watchdog);
+    refreshing = false;
+    devices = mergeReadings(devices, result.readings || []);
+    pollAt = result.completedAt || Date.now();
+    syncTrays(); broadcast(); notifyLowBatteries(); schedulePoll();
+  });
+  const failed = error => {
+    if (worker !== owned || quitting) return;
+    log(error);
+    worker = null;
+    clearTimeout(watchdog);
+    refreshing = false;
+    devices = devices.map(d => ({ ...d, status: d.status === 'unsupported' ? d.status : 'unavailable', charging: false }));
+    syncTrays(); broadcast(); schedulePoll(10000);
+  };
+  owned.on('error', failed);
+  owned.on('exit', code => { if (worker === owned && !quitting) failed(`HID worker exited (${code})`); });
+  return owned;
+}
+
+function poll() {
+  if (refreshing || quitting) return;
+  clearTimeout(pollTimer);
+  refreshing = true; broadcast();
+  try {
+    const active = worker || createWorker();
+    active.postMessage('poll');
+    watchdog = setTimeout(() => {
+      if (worker !== active) return;
+      log('HID polling timed out');
+      worker = null;
+      void active.terminate();
+      refreshing = false;
+      devices = devices.map(d => ({ ...d, status: d.status === 'unsupported' ? d.status : 'unavailable', charging: false }));
+      syncTrays(); broadcast(); schedulePoll(10000);
+    }, 6000);
+  } catch (error) { refreshing = false; log(error); broadcast(); schedulePoll(); }
+}
+
+function updateSettings(patch) {
+  const next = normalize(patch, settings);
+  if (Object.prototype.hasOwnProperty.call(patch, 'autostart')) next.autostart = setStartup(next.autostart);
+  if (next.threshold !== settings.threshold || next.alerts !== settings.alerts) notified.clear();
+  settings = next;
+  nativeTheme.themeSource = settings.theme;
+  saveSettings(); syncTrays(); broadcast();
+  if (!refreshing) schedulePoll();
+  return snapshot();
+}
+
+function fromPanel(event) { return panel && event.sender === panel.webContents; }
+ipcMain.handle('battery:get', event => { if (!fromPanel(event)) throw new Error('Invalid sender'); return snapshot(); });
+ipcMain.handle('battery:settings', (event, patch) => { if (!fromPanel(event) || !patch || typeof patch !== 'object') throw new Error('Invalid settings'); return updateSettings(patch); });
+ipcMain.handle('battery:refresh', event => { if (!fromPanel(event)) return; poll(); });
+ipcMain.on('battery:hide', event => { if (fromPanel(event)) panel.hide(); });
+ipcMain.on('battery:resize', (event, height) => {
+  if (!fromPanel(event) || !Number.isFinite(height)) return;
+  const work = screen.getDisplayNearestPoint(lastAnchor || screen.getCursorScreenPoint()).workArea;
+  panel.setSize(Math.min(400, work.width), Math.max(180, Math.min(Math.ceil(height), work.height - 8)), false);
+  if (panel.isVisible()) positionPanel(lastAnchor);
+});
+ipcMain.handle('battery:logs', event => { if (fromPanel(event)) shell.openPath(app.getPath('userData')); });
+ipcMain.on('battery:quit', event => { if (fromPanel(event)) app.quit(); });
+
+const locked = app.requestSingleInstanceLock();
+if (!locked) app.quit();
+else {
+  app.on('second-instance', (_event, argv) => { if (!argv.includes('--silent')) showPanel(lastAnchor); });
+  app.on('window-all-closed', () => {});
+  app.on('before-quit', () => {
+    quitting = true;
+    clearTimeout(pollTimer); clearTimeout(watchdog);
+    worker?.terminate();
+    for (const item of trays.values()) item.destroy();
+    trays.clear();
+  });
+  app.whenReady().then(() => {
+    app.setAppUserModelId('local.batterydock.app');
+    fs.mkdirSync(app.getPath('userData'), { recursive: true });
+    try { settings = normalize(JSON.parse(fs.readFileSync(settingsPath(), 'utf8'))); } catch {}
+    settings.autostart = startupEnabled();
+    nativeTheme.themeSource = settings.theme;
+    syncTrays(); poll();
+    nativeTheme.on('updated', () => { syncTrays(); broadcast(); });
+    powerMonitor.on('resume', () => { startedAt = Date.now(); schedulePoll(2000); });
+    if (!process.argv.includes('--silent')) showPanel(lastAnchor);
+    if (testMode) {
+      globalThis.batteryTest = {
+        state: snapshot,
+        show: showPanel,
+        setSettings: updateSettings,
+        login: () => ({ name: loginName, options: loginConfig, command: startupCommand(), enabled: startupEnabled(), actual: app.getLoginItemSettings(loginConfig) }),
+        trayCount: () => trays.size,
+        hide: () => panel?.hide()
+      };
+    }
+  }).catch(error => { log(error); app.quit(); });
+}
+process.on('uncaughtException', log);
+process.on('unhandledRejection', log);

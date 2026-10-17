@@ -1,0 +1,52 @@
+{
+  "name": "battery-dock",
+  "version": "1.0.0",
+  "description": "Wireless device battery tray monitor for Windows",
+  "author": "BatteryDock",
+  "license": "MIT",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "assets": "node scripts/assets.cjs",
+    "test": "node --test test/*.test.cjs",
+    "test:app": "node scripts/smoke.cjs",
+    "pack": "electron-builder --win nsis portable --x64"
+  },
+  "dependencies": { "node-hid": "3.4.0" },
+  "devDependencies": {
+    "@napi-rs/canvas": "1.0.11",
+    "electron": "44.9.0",
+    "electron-builder": "26.15.3",
+    "lucide": "1.59.0",
+    "playwright-core": "1.64.1"
+  },
+  "build": {
+    "appId": "local.batterydock.app",
+    "productName": "BatteryDock",
+    "directories": { "output": "dist", "buildResources": "assets" },
+    "electronDist": "node_modules/electron/dist",
+    "files": ["src/**/*", "assets/**/*", "package.json"],
+    "asar": true,
+    "asarUnpack": ["node_modules/node-hid/**/*", "node_modules/pkg-prebuilds/**/*"],
+    "npmRebuild": false,
+    "win": {
+      "icon": "assets/app.ico",
+      "target": ["nsis", "portable"],
+      "signAndEditExecutable": false,
+      "artifactName": "BatteryDock-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "shortcutName": "BatteryDock",
+      "include": "scripts/installer.nsh",
+      "artifactName": "BatteryDock-${version}-Setup.${ext}",
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": { "artifactName": "BatteryDock-${version}-Portable.${ext}" }
+  }
+}
