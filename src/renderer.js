@@ -6,6 +6,7 @@
   let message = '';
   let saving = false;
   let resizeFrame = 0;
+  let lastHeight = 0;
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const icon = name => `<i data-lucide="${name}" aria-hidden="true"></i>`;
   const iconButton = (action, name, label, extra = '') => `<button type="button" class="icon-button" data-action="${action}" aria-label="${label}" data-tooltip="${label}" ${extra}>${icon(name)}</button>`;
@@ -50,7 +51,16 @@
   }
   function renderSettings() {
     const s = state.settings;
-    return header('设置') + `<div class="settings"><div class="preference-group"><div class="section-label">外观</div>${segment('theme',[['system','跟随系统'],['light','浅色'],['dark','深色']])}</div><div class="preference-group"><div class="section-label">面板布局</div>${segment('layout',[['widget','电池小组件'],['list','设备列表']])}</div>${toggle('numbers','托盘显示电量数字')}${toggle('alerts','低电量提醒')}<div class="threshold"><label class="threshold-label" for="threshold"><span>提醒阈值</span><output id="threshold-output">${s.threshold}%</output></label><input type="range" min="5" max="40" step="5" value="${s.threshold}" id="threshold" data-pref="threshold" aria-label="提醒阈值" ${!s.alerts || saving ? 'disabled' : ''}></div><div class="setting-row"><label class="setting-label" for="refresh">刷新频率</label><select class="select" id="refresh" data-pref="refresh" aria-label="刷新频率" ${saving ? 'disabled' : ''}>${[10,30,60].map(v=>`<option value="${v}" ${s.refresh === v ? 'selected' : ''}>每 ${v} 秒</option>`).join('')}</select></div>${toggle('autostart','开机静默自启','登录后仅在托盘运行，不弹出面板')}</div><div class="about"><span>BatteryDock ${escape(state.version)}</span><button type="button" class="text-button" data-action="logs">日志</button><button type="button" class="text-button" data-action="quit">退出应用</button></div>`;
+    return header('设置') + `<div class="settings">
+      <div class="preference-group"><div class="section-label">外观</div>${segment('theme',[['system','跟随系统'],['light','浅色'],['dark','深色']])}</div>
+      <div class="preference-group"><div class="section-label">面板布局</div>${segment('layout',[['widget','电池小组件'],['list','设备列表']])}</div>
+      ${toggle('numbers','托盘显示设备图标和电量')}
+      <div class="setting-row"><span class="setting-label">Windows 任务栏图标</span>${iconButton('taskbar','external-link','打开 Windows 任务栏图标设置')}</div>
+      ${toggle('alerts','低电量提醒')}
+      <div class="threshold"><label class="threshold-label" for="threshold"><span>提醒阈值</span><output id="threshold-output">${s.threshold}%</output></label><input type="range" min="5" max="40" step="5" value="${s.threshold}" id="threshold" data-pref="threshold" aria-label="提醒阈值" ${!s.alerts || saving ? 'disabled' : ''}></div>
+      <div class="setting-row"><label class="setting-label" for="refresh">刷新频率</label><select class="select" id="refresh" data-pref="refresh" aria-label="刷新频率" ${saving ? 'disabled' : ''}>${[10,30,60].map(v=>`<option value="${v}" ${s.refresh === v ? 'selected' : ''}>每 ${v} 秒</option>`).join('')}</select></div>
+      ${toggle('autostart','开机静默自启','登录后仅在托盘运行，不弹出面板')}
+      </div><div class="about"><span>BatteryDock ${escape(state.version)}</span><button type="button" class="text-button" data-action="logs">日志</button><button type="button" class="text-button" data-action="quit">退出应用</button></div>`;
   }
   function renderDetail() {
     const d = state.devices.find(d => d.id === selected);
@@ -61,7 +71,12 @@
   }
   function resize() {
     cancelAnimationFrame(resizeFrame);
-    resizeFrame = requestAnimationFrame(() => window.battery.resize(app.getBoundingClientRect().height));
+    resizeFrame = requestAnimationFrame(() => {
+      const height = Math.ceil(app.querySelector('.panel').getBoundingClientRect().height + 16);
+      if (height === lastHeight) return;
+      lastHeight = height;
+      window.battery.resize(height);
+    });
   }
   function render() {
     if (!state) return;
@@ -94,6 +109,7 @@
       case 'detail': view = 'detail'; selected = control.dataset.device; break;
       case 'refresh': void window.battery.refresh().catch(e => { message = e.message; render(); }); break;
       case 'logs': void window.battery.logs(); break;
+      case 'taskbar': void window.battery.taskbar().catch(e => { message = e.message; render(); }); break;
       case 'quit': window.battery.quit(); return;
     }
     render();
@@ -130,6 +146,7 @@
   app.addEventListener('pointerout', clearTip);
   app.addEventListener('pointerdown', clearTip);
   window.addEventListener('blur', clearTip);
+  window.addEventListener('resize', resize);
   window.battery.onState(value => { state = value; render(); });
   window.battery.onView(value => { view = value === 'settings' ? 'settings' : 'main'; message = ''; render(); });
   window.battery.state().then(value => { state = value; render(); }).catch(error => { app.textContent = error.message; });

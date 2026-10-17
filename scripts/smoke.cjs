@@ -38,6 +38,9 @@ async function main() {
     await page.waitForSelector('.panel');
     report.hardware=await settle(app);
     assert.equal(await app.evaluate(()=>globalThis.batteryTest.trayCount()),2);
+    const identities=await app.evaluate(()=>globalThis.batteryTest.trayIdentity());
+    assert.deepEqual(identities.map(x=>x.id).sort(),['keyboard','mouse']);
+    assert.notEqual(identities[0].guid,identities[1].guid);
     report.checks.push('Two native tray icons created; real HID poll completed');
     await page.screenshot({path:path.join(reportDirectory,'widget-live.png')});
     await page.getByRole('button',{name:'LeoBog HI75C Pro，查看详情',exact:true}).click();
@@ -47,13 +50,28 @@ async function main() {
     assert.equal(await app.evaluate(()=>globalThis.batteryTest.trayCount()),1);
     await page.getByRole('switch',{name:'显示在托盘',exact:true}).check();
     await page.waitForFunction(()=>!document.querySelector('[data-visible]').disabled);
+    assert.deepEqual((await app.evaluate(()=>globalThis.batteryTest.trayIdentity())).map(({id,guid})=>({id,guid})),identities.map(({id,guid})=>({id,guid})));
+    report.checks.push('Device-specific tray identities survive icon recreation');
     await page.getByRole('button',{name:'返回电量面板',exact:true}).click();
     await page.getByRole('button',{name:'设置',exact:true}).click();
+    await app.evaluate(({shell})=>{
+      globalThis.originalOpenExternal=shell.openExternal;
+      shell.openExternal=async url=>{globalThis.taskbarSettingsUrl=url;};
+    });
+    try {
+      await page.getByRole('button',{name:'打开 Windows 任务栏图标设置',exact:true}).click();
+      assert.equal(await app.evaluate(()=>globalThis.taskbarSettingsUrl),'ms-settings:taskbar');
+    } finally {
+      await app.evaluate(({shell})=>{shell.openExternal=globalThis.originalOpenExternal;delete globalThis.originalOpenExternal;});
+    }
+    report.checks.push('Taskbar settings control routes through validated IPC to the Windows taskbar settings URI');
     await page.getByRole('button',{name:'深色',exact:true}).click();
     await page.waitForFunction(()=>document.documentElement.style.colorScheme==='dark');
     await page.waitForFunction(()=>!document.getElementById('numbers').disabled);
+    const boundsBeforeStartup=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
     await page.getByRole('switch',{name:'开机静默自启',exact:true}).check();
     await page.waitForFunction(()=>!document.getElementById('autostart').disabled);
+    assert.deepEqual(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds()),boundsBeforeStartup);
     const startup=await app.evaluate(()=>globalThis.batteryTest.login());
     assert.equal(startup.enabled,true);
     assert.ok(startup.command.endsWith('--silent'));
@@ -76,6 +94,8 @@ async function main() {
     assert.equal(windows.filter(w=>w.visible).length,0);
     report.silentStart={visibleWindows:0,trays:await app.evaluate(()=>globalThis.batteryTest.trayCount())};
     assert.equal(report.silentStart.trays,2);
+    assert.deepEqual((await app.evaluate(()=>globalThis.batteryTest.trayIdentity())).map(({id,guid})=>({id,guid})),identities.map(({id,guid})=>({id,guid})));
+    report.checks.push('Tray identities survive silent relaunch at the same executable path');
     report.checks.push('Silent relaunch creates tray icons and polls hardware with no visible window');
     report.checks.push('Theme, layout and threshold survive relaunch');
     await app.evaluate(()=>globalThis.batteryTest.setSettings({autostart:false}));

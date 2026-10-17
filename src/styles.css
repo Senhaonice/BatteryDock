@@ -15,7 +15,7 @@ button { cursor: default; -webkit-tap-highlight-color: transparent; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 button:disabled, input:disabled { opacity: .45; }
 button, a, input, select { -webkit-app-region: no-drag; }
-#app { padding: 8px; }
+#app { padding: 8px; max-height: 100vh; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
 .panel { overflow: hidden; background: var(--panel); border: 1px solid var(--edge); border-radius: 18px; box-shadow: 0 4px 12px -5px var(--shadow); }
 .header { display: flex; align-items: center; gap: 10px; padding: 19px 21px 14px; min-height: 73px; }
 .heading { flex: 1; min-width: 0; }

@@ -18,10 +18,17 @@ The `node-hid` package ships its Windows N-API prebuild. The native backend runs
 
 ```powershell
 npm run test:app
+npm run test:ui
 npm run pack
 ```
 
 `test:app` uses a separate profile and a temporary `BatteryDock_Test` login item, removes the login item afterward, and writes screenshots/reports under the adjacent `verification` directory. To test a built executable, set `BATTERY_DOCK_EXECUTABLE` to its absolute path before running the smoke script.
+
+`test:ui` checks repeated settings interactions and navigation at 100%, 125%, 150% and 200% DPI. Window sizing uses intrinsic panel height and caches the last requested content size to prevent fractional-DPI resize feedback.
+
+## Tray Visibility
+
+Each device has its own icon plus percentage and a stable GUID tied to the executable path. Windows controls whether a notification icon appears on the taskbar or in the overflow. Use the taskbar settings button in Settings, or drag each BatteryDock icon from the overflow onto the taskbar once. Keep the installation path stable so Windows can retain that selection. Portable extraction uses a stable directory for the same reason.
 
 ## Startup
 

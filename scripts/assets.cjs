@@ -27,21 +27,23 @@ async function main() {
   fs.writeFileSync(path.join(directory, 'app.ico'), Buffer.concat([ico, png]));
   for (const theme of ['light', 'dark']) {
     const color = theme === 'dark' ? '#f4f5f6' : '#25272a';
-    for (let value = 0; value <= 100; value++) {
-      const image = createCanvas(32, 32), context = image.getContext('2d');
-      context.fillStyle = value <= 20 ? (theme === 'dark' ? '#ff8a8d' : '#bd3039') : color;
-      context.font = `600 ${value === 100 ? 19 : 24}px "Segoe UI"`;
-      context.textAlign = 'center'; context.textBaseline = 'middle';
-      context.fillText(String(value), 16, 16, 32);
-      fs.writeFileSync(path.join(directory, 'tray', `${theme}-${value}.png`), image.toBuffer('image/png'));
-    }
     for (const [id, symbol] of [['mouse','Mouse'],['keyboard','Keyboard'],['app','BatteryMedium']]) {
-      const image = createCanvas(32, 32), context = image.getContext('2d');
+      const image = createCanvas(64, 64), context = image.getContext('2d');
       const graphic = await loadImage(Buffer.from(svgFor(symbol, color)));
-      context.drawImage(graphic, 2, 2, 28, 28);
-      fs.writeFileSync(path.join(directory, 'tray', `${theme}-${id}.png`), image.toBuffer('image/png'));
+      context.drawImage(graphic, 4, 4, 56, 56);
+      fs.writeFileSync(path.join(directory, 'tray', `${theme}-${id}-icon.png`), image.toBuffer('image/png'));
+      if (id === 'app') continue;
+      for (const value of [...Array(101).keys(), 'unknown']) {
+        context.clearRect(0, 0, 64, 64);
+        context.drawImage(graphic, 15, -1, 34, 34);
+        context.fillStyle = value !== 'unknown' && value <= 20 ? (theme === 'dark' ? '#ff8a8d' : '#bd3039') : color;
+        context.font = `600 ${value === 100 ? 34 : 38}px "Segoe UI"`;
+        context.textAlign = 'center'; context.textBaseline = 'middle';
+        context.fillText(value === 'unknown' ? '--' : String(value), 32, 49, 64);
+        fs.writeFileSync(path.join(directory, 'tray', `${theme}-${id}-${value}.png`), image.toBuffer('image/png'));
+      }
     }
   }
-  console.log('Generated application icon, 208 tray images and local Lucide bundle');
+  console.log('Generated application icon, device + percentage tray images and local Lucide bundle');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

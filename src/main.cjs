@@ -5,6 +5,7 @@ const { Worker } = require('node:worker_threads');
 const { execFileSync } = require('node:child_process');
 const { normalize, initialDevices, mergeReadings, notificationBucket } = require('./state.cjs');
 const { executableForLogin, loginOptions, enabledFrom } = require('./startup.cjs');
+const { trayGuid, trayAsset } = require('./tray.cjs');
 
 const testMode = process.env.BATTERY_DOCK_TEST === '1';
 if (testMode) {
@@ -29,6 +30,7 @@ let lastTray = null;
 let startedAt = Date.now();
 let lastAnchor = null;
 let busyMenu = false;
+let lastPanelSize = null;
 const trays = new Map();
 const notified = new Map();
 const assetPath = (...parts) => path.join(__dirname, '..', 'assets', ...parts);
@@ -93,8 +95,7 @@ function relativeStatus(d) {
 
 function trayImage(d) {
   const theme = nativeTheme.shouldUseDarkColorsForSystemIntegratedUI ? 'dark' : 'light';
-  const key = settings.numbers && d.status === 'fresh' && Number.isInteger(d.percentage) ? String(d.percentage) : d.id;
-  let image = nativeImage.createFromPath(assetPath('tray', `${theme}-${key}.png`));
+  let image = nativeImage.createFromPath(assetPath('tray', trayAsset(d, settings.numbers, theme)));
   if (image.isEmpty()) image = nativeImage.createFromPath(assetPath('app.png'));
   return image;
 }
@@ -108,6 +109,7 @@ function contextMenu() {
     { type: 'separator' },
     { label: '开机静默自启', type: 'checkbox', checked: settings.autostart, click: item => { try { updateSettings({ autostart: item.checked }); } catch (e) { showError(e.message); } } },
     { label: '设置', click: () => showPanel(lastAnchor, 'settings') },
+    { label: '任务栏图标设置', click: () => openTaskbarSettings() },
     { label: '退出 BatteryDock', click: () => app.quit() }
   ]);
 }
@@ -123,12 +125,12 @@ function syncTrays() {
   for (const d of desired) {
     let item = trays.get(d.id);
     if (!item) {
-      item = new Tray(trayImage(d));
+      item = new Tray(trayImage(d), trayGuid(d.id, process.execPath, testMode ? app.getPath('userData') : ''));
       trays.set(d.id, item);
       item.on('click', (_event, bounds) => {
         lastTray = item;
-        lastAnchor = bounds;
-        if (panel?.isVisible()) panel.hide(); else showPanel(bounds);
+        const anchor = { ...bounds };
+        if (panel?.isVisible()) panel.hide(); else showPanel(anchor);
       });
       item.on('right-click', () => {
         lastTray = item;
@@ -162,7 +164,7 @@ function positionPanel(anchor) {
 async function createPanel() {
   if (panel && !panel.isDestroyed()) return panel;
   panel = new BrowserWindow({
-    width: 400, height: 440, minWidth: 340, minHeight: 180, show: false,
+    width: 400, height: 440, minWidth: 340, minHeight: 180, show: false, useContentSize: true,
     frame: false, transparent: true, backgroundColor: '#00000000', resizable: false,
     maximizable: false, minimizable: false, skipTaskbar: true, alwaysOnTop: true,
     hasShadow: false, autoHideMenuBar: true, title: 'BatteryDock', icon: assetPath('app.ico'),
@@ -172,7 +174,7 @@ async function createPanel() {
   panel.webContents.on('will-navigate', event => event.preventDefault());
   panel.on('blur', () => { if (!busyMenu && !testMode) panel?.hide(); });
   panel.on('close', event => { if (!quitting) { event.preventDefault(); panel.hide(); } });
-  panel.on('closed', () => { panel = null; });
+  panel.on('closed', () => { panel = null; lastPanelSize = null; });
   await panel.loadFile(path.join(__dirname, 'index.html'));
   broadcast();
   return panel;
@@ -181,7 +183,8 @@ async function createPanel() {
 async function showPanel(anchor, view = 'main') {
   try {
     await createPanel();
-    lastAnchor = anchor || lastTray?.getBounds();
+    const bounds = anchor || lastTray?.getBounds();
+    lastAnchor = bounds ? { ...bounds } : null;
     positionPanel(lastAnchor);
     panel.webContents.send('battery:view', view);
     broadcast();
@@ -275,9 +278,15 @@ ipcMain.on('battery:hide', event => { if (fromPanel(event)) panel.hide(); });
 ipcMain.on('battery:resize', (event, height) => {
   if (!fromPanel(event) || !Number.isFinite(height)) return;
   const work = screen.getDisplayNearestPoint(lastAnchor || screen.getCursorScreenPoint()).workArea;
-  panel.setSize(Math.min(400, work.width), Math.max(180, Math.min(Math.ceil(height), work.height - 8)), false);
+  const size = { width: Math.min(400, work.width), height: Math.max(180, Math.min(Math.ceil(height), work.height - 8)) };
+  // At fractional DPI, repeating a native resize can accumulate rounding errors.
+  if (lastPanelSize?.width === size.width && lastPanelSize?.height === size.height) return;
+  lastPanelSize = size;
+  panel.setContentSize(size.width, size.height, false);
   if (panel.isVisible()) positionPanel(lastAnchor);
 });
+function openTaskbarSettings() { return shell.openExternal('ms-settings:taskbar'); }
+ipcMain.handle('battery:taskbar', event => { if (!fromPanel(event)) throw new Error('Invalid sender'); return openTaskbarSettings(); });
 ipcMain.handle('battery:logs', event => { if (fromPanel(event)) shell.openPath(app.getPath('userData')); });
 ipcMain.on('battery:quit', event => { if (fromPanel(event)) app.quit(); });
 
@@ -310,6 +319,7 @@ else {
         setSettings: updateSettings,
         login: () => ({ name: loginName, options: loginConfig, command: startupCommand(), enabled: startupEnabled(), actual: app.getLoginItemSettings(loginConfig) }),
         trayCount: () => trays.size,
+        trayIdentity: () => [...trays].map(([id, tray]) => ({ id, guid: tray.getGUID(), image: trayAsset(devices.find(d => d.id === id) || { id: 'app' }, settings.numbers, 'light') })),
         hide: () => panel?.hide()
       };
     }

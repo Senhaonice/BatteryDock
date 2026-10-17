@@ -1,6 +1,6 @@
 {
   "name": "battery-dock",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Wireless device battery tray monitor for Windows",
   "author": "BatteryDock",
   "license": "MIT",
@@ -10,6 +10,7 @@
     "assets": "node scripts/assets.cjs",
     "test": "node --test test/*.test.cjs",
     "test:app": "node scripts/smoke.cjs",
+    "test:ui": "node scripts/ui-regression.cjs",
     "pack": "electron-builder --win nsis portable --x64"
   },
   "dependencies": { "node-hid": "3.4.0" },
@@ -32,7 +33,7 @@
     "win": {
       "icon": "assets/app.ico",
       "target": ["nsis", "portable"],
-      "signAndEditExecutable": false,
+      "signExecutable": false,
       "artifactName": "BatteryDock-${version}-${arch}.${ext}"
     },
     "nsis": {
@@ -47,6 +48,6 @@
       "artifactName": "BatteryDock-${version}-Setup.${ext}",
       "deleteAppDataOnUninstall": false
     },
-    "portable": { "artifactName": "BatteryDock-${version}-Portable.${ext}" }
+    "portable": { "artifactName": "BatteryDock-${version}-Portable.${ext}", "unpackDirName": "BatteryDock" }
   }
 }
