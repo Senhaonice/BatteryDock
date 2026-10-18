@@ -3,13 +3,14 @@ const assert = require('node:assert/strict');
 const { stripBounds, stripDevices, taskbarWorkArea } = require('../src/strip.cjs');
 const { normalize, initialDevices } = require('../src/state.cjs');
 
-test('existing settings migrate to the visible strip without losing preferences', () => {
+test('strip is disabled by default while explicit choices and other preferences survive', () => {
   const settings = normalize({ numbers: false, layout: 'list', visible: { mouse: false } });
-  assert.equal(settings.strip, true);
+  assert.equal(settings.strip, false);
   assert.equal(settings.numbers, false);
   assert.deepEqual(stripDevices(initialDevices(), settings).map(d => d.id), ['keyboard', 'controller']);
   assert.equal(normalize({ strip: false }, settings).strip, false);
-  assert.equal(normalize({ strip: 'false' }, settings).strip, true);
+  assert.equal(normalize({ strip: true }, settings).strip, true);
+  assert.equal(normalize({ strip: 'false' }, settings).strip, false);
 });
 
 test('auto-hidden taskbar moves strip to screen edge and expanded taskbar moves it back up', () => {

@@ -1,6 +1,6 @@
 # BatteryDock
 
-Windows x64 offline battery monitor. The Apple-inspired interface includes a readable battery strip above the taskbar and locally bundled device images.
+Windows x64 offline battery monitor. The Apple-inspired interface includes one application tray icon, a battery panel and locally bundled device images.
 
 ## Development
 
@@ -33,13 +33,13 @@ Choosing the battery widget saves the preference and opens the widget panel. Cho
 
 ## Tray Visibility
 
-The battery strip is enabled by default, including when upgrading existing settings. It shows device photos, explicit labels and large percentages above the primary display's taskbar. Clicking any device opens the panel; right-clicking opens the application menu. The strip follows the desktop work area after display, DPI or taskbar changes. It is an independent window, not an embedded Windows taskbar extension.
+The independent battery strip is disabled by default. Its optional Settings switch shows device photos, explicit labels and large percentages above the primary display's taskbar. Clicking any device opens the panel; right-clicking opens the application menu. The strip follows the desktop work area after display, DPI or taskbar changes. It is an independent window, not an embedded Windows taskbar extension.
 
 A bundled, hidden PowerShell helper reads the primary taskbar rectangle and auto-hide flag using Windows APIs. It sends changes to the app, which converts physical coordinates to DIPs and follows the taskbar when it retracts or expands. The helper does not alter taskbar settings and exits with the app. If it is unavailable, work-area positioning remains the fallback.
 
-With the strip enabled, one stable application tray icon provides access. Disabling the strip restores the previous per-device tray icons. Windows controls whether notification icons appear on the taskbar or in overflow. Use the taskbar settings button in Settings, or drag the BatteryDock icon from overflow onto the taskbar once. Keep the installation path stable so Windows can retain that selection. Portable extraction uses a stable directory for the same reason.
+One stable application tray icon provides access, whether the optional strip is enabled or disabled. Hover to read device statuses, click to open or hide the battery panel, and right-click for the application menu. Device visibility and battery updates do not create additional icons. Windows controls whether notification icons appear on the taskbar or in overflow. Use the taskbar settings button in Settings, or drag the BatteryDock icon from overflow onto the taskbar once. Keep the installation path stable so Windows can retain that selection. Portable extraction uses a stable directory for the same reason.
 
-Device visibility switches control strip membership and, for supported devices, tray membership when the strip is off. A stale, loading, disconnected or unsupported strip entry shows `--`; a stale percentage remains explicitly labelled as the previous value in the full panel. Only fresh readings trigger low-battery colours and charging indicators.
+Device visibility switches control optional strip membership. All devices remain accessible in the panel and Settings. A stale, loading, disconnected or unsupported strip entry shows `--`; a stale percentage remains explicitly labelled as the previous value in the full panel. Only fresh readings trigger low-battery colours and charging indicators.
 
 Official images identify the orange VGN Dragonfly 3 colour family, black transparent-keycap HI75C family, and purple 8BitDo Ultimate 2. The keyboard photograph is a family appearance reference, not a verified Pro photograph, as disclosed in device details. See `assets/devices/SOURCES.md` for source and rights attribution. No images are downloaded at runtime.
 

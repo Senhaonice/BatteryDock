@@ -31,6 +31,7 @@ let refreshing = false;
 let quitting = false;
 let pollAt = null;
 let lastTray = null;
+let lastTrayTooltip = '';
 let startedAt = Date.now();
 let lastAnchor = null;
 let busyMenu = false;
@@ -131,8 +132,7 @@ function showError(body) {
 }
 
 function syncTrays() {
-  const shown = settings.strip ? [] : devices.filter(d => d.id !== 'controller' && settings.visible[d.id]);
-  const desired = shown.length ? shown : [{ id: 'app', name: 'BatteryDock', short: '电量', status: 'idle' }];
+  const desired = [{ id: 'app', name: 'BatteryDock', short: '电量', status: 'idle' }];
   for (const [id, item] of trays) if (!desired.some(d => d.id === id)) { item.destroy(); trays.delete(id); }
   for (const d of desired) {
     let item = trays.get(d.id);
@@ -153,8 +153,8 @@ function syncTrays() {
       });
     }
     item.setImage(trayImage(d));
-    const old = d.observedAt && d.status !== 'fresh' ? `\n上次读取：${d.percentage}% · ${new Date(d.observedAt).toLocaleTimeString('zh-CN')}` : '';
-    item.setToolTip(d.id === 'app' ? 'BatteryDock · 设备电量' : `${d.name}\n${relativeStatus(d)}${old}`);
+    lastTrayTooltip = ['BatteryDock', ...devices.map(device => `${device.short}：${relativeStatus(device)}`)].join('\n');
+    item.setToolTip(lastTrayTooltip);
   }
 }
 
@@ -422,7 +422,8 @@ else {
         setSettings: updateSettings,
         login: () => ({ name: loginName, options: loginConfig, command: startupCommand(), enabled: startupEnabled(), actual: app.getLoginItemSettings(loginConfig) }),
         trayCount: () => trays.size,
-        trayIdentity: () => [...trays].map(([id, tray]) => ({ id, guid: tray.getGUID(), image: trayAsset(devices.find(d => d.id === id) || { id: 'app' }, settings.numbers, 'light') })),
+        trayIdentity: () => [...trays].map(([id, tray]) => ({ id, guid: tray.getGUID(), image: trayAsset({ id: 'app' }, settings.numbers, 'light'), tooltip: lastTrayTooltip })),
+        clickTray: () => { const tray = trays.get('app'); tray.emit('click', {}, tray.getBounds()); },
         hide: () => panel?.hide(),
         strip: () => strip && !strip.isDestroyed() ? { visible: strip.isVisible(), bounds: strip.getBounds() } : null,
         setDevices: readings => { devices = mergeReadings(devices, readings); syncTrays(); broadcast(); },

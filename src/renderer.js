@@ -65,7 +65,7 @@
   }
   const properties = rows => `<dl class="properties">${rows.map(([label,value])=>`<div class="property"><dt>${escape(label)}</dt><dd>${escape(value)}</dd></div>`).join('')}</dl>`;
   function renderDeviceList() {
-    return `<div class="devices device-information" aria-label="全部设备信息">${state.devices.map(d => `<section class="device-section" aria-label="${escape(d.name)}完整信息"><div class="device" data-device="${d.id}">${photo(d)}<div class="device-info"><span class="device-name">${escape(d.name)}</span><span class="device-meta ${colorClass(d)}">${statusText(d)}</span></div>${number(d)}</div>${properties(deviceRows(d))}<div class="setting-row device-visibility"><label for="visible-${d.id}">显示在电量条${d.id === 'controller' ? '' : '或托盘'}</label><input type="checkbox" role="switch" class="switch" id="visible-${d.id}" data-visible="${d.id}" aria-label="显示${escape(d.name)}" ${state.settings.visible[d.id] ? 'checked' : ''} ${saving ? 'disabled' : ''}></div></section>`).join('')}</div>`;
+    return `<div class="devices device-information" aria-label="全部设备信息">${state.devices.map(d => `<section class="device-section" aria-label="${escape(d.name)}完整信息"><div class="device" data-device="${d.id}">${photo(d)}<div class="device-info"><span class="device-name">${escape(d.name)}</span><span class="device-meta ${colorClass(d)}">${statusText(d)}</span></div>${number(d)}</div>${properties(deviceRows(d))}<div class="setting-row device-visibility"><label for="visible-${d.id}">显示在电量条</label><input type="checkbox" role="switch" class="switch" id="visible-${d.id}" data-visible="${d.id}" aria-label="显示${escape(d.name)}" ${state.settings.visible[d.id] ? 'checked' : ''} ${saving ? 'disabled' : ''}></div></section>`).join('')}</div>`;
   }
   const segment = (key, options) => `<div class="segment" role="group" aria-label="${key === 'theme' ? '外观' : '面板布局'}">${options.map(([value,label]) => `<button type="button" data-pref-button="${key}" data-value="${value}" aria-pressed="${state.settings[key] === value}" ${saving ? 'disabled' : ''}>${label}</button>`).join('')}</div>`;
   function toggle(key,label,note = '') {
@@ -78,19 +78,18 @@
       <div class="preference-group"><div class="section-label">设备视图</div>${segment('layout',[['widget','电池小组件'],['list','设备列表']])}</div>
       ${s.layout === 'list' ? renderDeviceList() : ''}
       ${toggle('strip','显示任务栏上方电量条')}
-      ${toggle('numbers','托盘显示设备图标和电量','关闭电量条时生效')}
       <div class="setting-row"><span class="setting-label">Windows 任务栏图标</span>${iconButton('taskbar','external-link','打开 Windows 任务栏图标设置')}</div>
       ${toggle('alerts','低电量提醒')}
       <div class="threshold"><label class="threshold-label" for="threshold"><span>提醒阈值</span><output id="threshold-output">${s.threshold}%</output></label><input type="range" min="5" max="40" step="5" value="${s.threshold}" id="threshold" data-pref="threshold" aria-label="提醒阈值" ${!s.alerts || saving ? 'disabled' : ''}></div>
       <div class="setting-row"><label class="setting-label" for="refresh">刷新频率</label><select class="select" id="refresh" data-pref="refresh" aria-label="刷新频率" ${saving ? 'disabled' : ''}>${[10,30,60].map(v=>`<option value="${v}" ${s.refresh === v ? 'selected' : ''}>每 ${v} 秒</option>`).join('')}</select></div>
-      ${toggle('autostart','开机静默自启','登录后不弹出面板，保留电量条与托盘')}
+      ${toggle('autostart','开机静默自启','登录后不弹出面板')}
       </div><div class="about"><span>BatteryDock ${escape(state.version)}</span><button type="button" class="text-button" data-action="logs">日志</button><button type="button" class="text-button" data-action="quit">退出应用</button></div>`;
   }
   function renderDetail() {
     const d = state.devices.find(d => d.id === selected);
     const rows = deviceRows(d);
     const description = fresh(d) ? d.charging ? '正在充电' : '未充电' : d.id === 'controller' ? '此接收器暂未适配电量协议' : d.status === 'disconnected' ? '请检查 USB 接收器' : '可尝试唤醒设备后刷新';
-    return header(d.name,d.short) + `<div class="detail-hero" data-device="${d.id}">${photo(d)}${number(d)}<div class="detail-state ${colorClass(d)}">${description}</div></div>${properties(rows)}<div class="detail-toggle"><div class="setting-row"><label for="visible-device">显示在电量条${d.id === 'controller' ? '' : '或托盘'}</label><input type="checkbox" role="switch" class="switch" id="visible-device" data-visible="${d.id}" aria-label="显示此设备" ${state.settings.visible[d.id] ? 'checked' : ''} ${saving ? 'disabled' : ''}></div></div>`;
+    return header(d.name,d.short) + `<div class="detail-hero" data-device="${d.id}">${photo(d)}${number(d)}<div class="detail-state ${colorClass(d)}">${description}</div></div>${properties(rows)}<div class="detail-toggle"><div class="setting-row"><label for="visible-device">显示在电量条</label><input type="checkbox" role="switch" class="switch" id="visible-device" data-visible="${d.id}" aria-label="显示此设备" ${state.settings.visible[d.id] ? 'checked' : ''} ${saving ? 'disabled' : ''}></div></div>`;
   }
   function resize() {
     cancelAnimationFrame(resizeFrame);

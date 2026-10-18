@@ -22,6 +22,8 @@ async function run(scale) {
   try {
     const env = { ...process.env, BATTERY_DOCK_TEST: '1', BATTERY_DOCK_TEST_PROFILE: path.join(directory, `strip-${process.pid}-${scale}`) };
     delete env.ELECTRON_RUN_AS_NODE;
+    fs.mkdirSync(env.BATTERY_DOCK_TEST_PROFILE, { recursive: true });
+    fs.writeFileSync(path.join(env.BATTERY_DOCK_TEST_PROFILE, 'settings.json'), JSON.stringify({ strip: true }));
     const args = ['--silent', `--force-device-scale-factor=${scale}`];
     if (!executable) args.unshift(root);
     app = await electron.launch({ env, args, ...(executable ? { executablePath: executable } : {}), timeout: 30000 });

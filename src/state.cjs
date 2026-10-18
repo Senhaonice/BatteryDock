@@ -1,6 +1,6 @@
 const { DEFINITIONS } = require('./protocol.cjs');
 
-const DEFAULTS = Object.freeze({ theme: 'system', layout: 'widget', strip: true, numbers: true, alerts: true, threshold: 20, refresh: 10, autostart: false, visible: { mouse: true, keyboard: true, controller: true } });
+const DEFAULTS = Object.freeze({ theme: 'system', layout: 'widget', strip: false, numbers: true, alerts: true, threshold: 20, refresh: 10, autostart: false, visible: { mouse: true, keyboard: true, controller: true } });
 
 function normalize(input = {}, current = DEFAULTS) {
   const next = { ...DEFAULTS, ...current, visible: { ...DEFAULTS.visible, ...current.visible } };

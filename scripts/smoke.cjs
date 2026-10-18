@@ -45,7 +45,11 @@ async function main() {
     page.on('pageerror',e=>errors.push(e.message));
     await page.waitForSelector('.panel');
     report.hardware=await settle(app);
-    assert.equal(report.hardware.settings.strip,true);
+    assert.equal(report.hardware.settings.strip,false);
+    assert.equal(await app.evaluate(()=>globalThis.batteryTest.strip()?.visible || false),false);
+    assert.equal(await app.evaluate(()=>globalThis.batteryTest.trayCount()),1);
+    report.checks.push('Fresh profile starts with strip disabled and one application tray icon');
+    await save(page,{strip:true});
     assert.equal(await app.evaluate(()=>globalThis.batteryTest.trayCount()),1);
     for(let i=0;i<60 && !(await app.evaluate(()=>globalThis.batteryTest.strip()?.visible));i++) await new Promise(resolve=>setTimeout(resolve,100));
     const strip=app.windows().find(page=>page.url().endsWith('/strip.html'));
@@ -59,15 +63,18 @@ async function main() {
     });
     assert.ok(geometry.strip.y+geometry.strip.height<=geometry.work.y+geometry.work.height);
     assert.ok(geometry.panel.y+geometry.panel.height<=geometry.strip.y+2);
-    report.checks.push('Default strip shows three local photos above taskbar with one application tray entry; panel clears strip');
+    report.checks.push('Optional strip shows three local photos above taskbar with one application tray entry; panel clears strip');
     await strip.screenshot({path:path.join(reportDirectory,'strip-live.png')});
     await save(page,{strip:false});
     assert.equal(await app.evaluate(()=>globalThis.batteryTest.strip().visible),false);
-    assert.equal(await app.evaluate(()=>globalThis.batteryTest.trayCount()),2);
+    assert.equal(await app.evaluate(()=>globalThis.batteryTest.trayCount()),1);
     const identities=await app.evaluate(()=>globalThis.batteryTest.trayIdentity());
-    assert.deepEqual(identities.map(x=>x.id).sort(),['keyboard','mouse']);
-    assert.notEqual(identities[0].guid,identities[1].guid);
-    report.checks.push('Two native tray icons created; real HID poll completed');
+    assert.deepEqual(identities.map(x=>x.id),['app']);
+    assert.equal(identities[0].image,'light-app-icon.png');
+    assert.match(identities[0].tooltip,/鼠标：/);
+    assert.match(identities[0].tooltip,/键盘：/);
+    assert.match(identities[0].tooltip,/手柄：暂不支持读取/);
+    report.checks.push('One native application tray icon summarizes all three devices; real HID poll completed');
     await page.screenshot({path:path.join(reportDirectory,'widget-live.png')});
     await page.getByRole('button',{name:'LeoBog HI75C Pro，查看详情',exact:true}).click();
     assert.equal(await page.locator('h1').innerText(),'LeoBog HI75C Pro');
@@ -77,7 +84,7 @@ async function main() {
     await page.getByRole('switch',{name:'显示此设备',exact:true}).check();
     await page.waitForFunction(()=>!document.querySelector('[data-visible]').disabled);
     assert.deepEqual((await app.evaluate(()=>globalThis.batteryTest.trayIdentity())).map(({id,guid})=>({id,guid})),identities.map(({id,guid})=>({id,guid})));
-    report.checks.push('Device-specific tray identities survive icon recreation');
+    report.checks.push('Device visibility changes preserve the single application tray identity');
     await page.getByRole('button',{name:'返回电量面板',exact:true}).click();
     await page.getByRole('button',{name:'设置',exact:true}).click();
     await app.evaluate(({shell})=>{
@@ -93,7 +100,7 @@ async function main() {
     report.checks.push('Taskbar settings control routes through validated IPC to the Windows taskbar settings URI');
     await page.getByRole('button',{name:'深色',exact:true}).click();
     await page.waitForFunction(()=>document.documentElement.style.colorScheme==='dark');
-    await page.waitForFunction(()=>!document.getElementById('numbers').disabled);
+    await page.waitForFunction(()=>!document.getElementById('alerts').disabled);
     const boundsBeforeStartup=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html')).getBounds());
     await page.getByRole('switch',{name:'开机静默自启',exact:true}).check();
     await page.waitForFunction(()=>!document.getElementById('autostart').disabled);
@@ -123,9 +130,9 @@ async function main() {
     await page.waitForSelector('.devices .device');
     assert.equal(await page.locator('h1').innerText(),'设置');
     report.checks.push('Device list remains inline in Settings with all three photos and 34 information rows; battery widget opens its panel');
-    await page.waitForFunction(()=>!document.getElementById('numbers').disabled);
+    await page.waitForFunction(()=>!document.getElementById('alerts').disabled);
     await page.getByRole('slider',{name:'提醒阈值',exact:true}).fill('25');
-    await page.waitForFunction(()=>!document.getElementById('numbers').disabled);
+    await page.waitForFunction(()=>!document.getElementById('alerts').disabled);
     await page.screenshot({path:path.join(reportDirectory,'settings-dark.png')});
     await page.getByRole('button',{name:'返回电量面板',exact:true}).click();
     await page.screenshot({path:path.join(reportDirectory,'widget-live-dark.png')});
@@ -137,10 +144,10 @@ async function main() {
     const windows=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().map(w=>({visible:w.isVisible(),skipTaskbar:w.isSkipTaskbar()})));
     assert.equal(windows.filter(w=>w.visible).length,0);
     report.silentStart={visibleWindows:0,trays:await app.evaluate(()=>globalThis.batteryTest.trayCount())};
-    assert.equal(report.silentStart.trays,2);
+    assert.equal(report.silentStart.trays,1);
     assert.deepEqual((await app.evaluate(()=>globalThis.batteryTest.trayIdentity())).map(({id,guid})=>({id,guid})),identities.map(({id,guid})=>({id,guid})));
-    report.checks.push('Tray identities survive silent relaunch at the same executable path');
-    report.checks.push('Silent relaunch creates tray icons and polls hardware with no visible window');
+    report.checks.push('The application tray identity survives silent relaunch at the same executable path');
+    report.checks.push('Silent relaunch creates one tray icon and polls hardware with no visible window');
     report.checks.push('Theme, layout and threshold survive relaunch');
     await app.evaluate(()=>globalThis.batteryTest.setSettings({strip:true}));
     for(let i=0;i<60 && !(await app.evaluate(()=>globalThis.batteryTest.strip()?.visible));i++) await new Promise(resolve=>setTimeout(resolve,100));
@@ -164,6 +171,16 @@ async function main() {
       assert.ok(layout.scroll<=layout.width);
     }
     report.checks.push('Main UI fits 340 and 400 DIP widths');
+    await app.evaluate(()=>globalThis.batteryTest.setSettings({strip:false,visible:{mouse:false,keyboard:false,controller:false}}));
+    assert.equal(await app.evaluate(()=>globalThis.batteryTest.trayCount()),1);
+    assert.equal((await app.evaluate(()=>globalThis.batteryTest.trayIdentity()))[0].guid,identities[0].guid);
+    await app.evaluate(()=>globalThis.batteryTest.hide());
+    await app.evaluate(()=>globalThis.batteryTest.clickTray());
+    await second.waitForFunction(()=>document.visibilityState==='visible');
+    assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html')).isVisible()),true);
+    await app.evaluate(()=>globalThis.batteryTest.clickTray());
+    assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html')).isVisible()),false);
+    report.checks.push('One tray icon remains when every optional strip device is hidden; clicking it opens and hides the panel');
     assert.deepEqual(errors,[]);
     report.checks.push('No renderer exceptions');
     fs.writeFileSync(path.join(reportDirectory,executable ? 'packaged-smoke.json' : 'smoke.json'),JSON.stringify(report,null,2));

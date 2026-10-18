@@ -42,7 +42,7 @@ async function run(scale) {
     assert.ok(page,'Panel did not load');
     page.on('pageerror', error => record.errors.push(error.message));
     await page.getByRole('button', { name: '设置', exact: true }).click();
-    await page.waitForSelector('#numbers');
+    await page.waitForSelector('#alerts');
     await wait(450);
     record.initial = await geometry(application, page);
     const actions = [
@@ -66,11 +66,9 @@ async function run(scale) {
             await page.waitForSelector('.grid .grid-device');
           }
           await page.getByRole('button', { name: '设置', exact: true }).click();
-          await page.waitForSelector('#numbers');
+          await page.waitForSelector('#alerts');
         }
       })),
-      { name: 'numbers off', run: () => page.locator('#numbers').uncheck() },
-      { name: 'numbers on', run: () => page.locator('#numbers').check() },
       { name: 'alerts off', run: () => page.locator('#alerts').uncheck() },
       { name: 'alerts on', run: () => page.locator('#alerts').check() },
       { name: 'threshold', run: () => page.locator('#threshold').fill('30') },
@@ -79,7 +77,7 @@ async function run(scale) {
     for (let cycle = 0; cycle < 2; cycle++) {
       for (const action of actions) {
         await action.run();
-        await page.waitForFunction(() => !document.getElementById('numbers').disabled);
+        await page.waitForFunction(() => !document.getElementById('alerts').disabled);
         await wait(160);
         const sample = { action: `${cycle}:${action.name}`, ...await geometry(application, page) };
         record.samples.push(sample);
