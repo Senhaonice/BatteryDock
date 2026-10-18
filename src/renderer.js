@@ -29,7 +29,7 @@
     return fresh(d) ? `<span class="number ${colorClass(d)}"><strong>${d.percentage}</strong><small>%</small></span>` : `<span class="unknown-value">${d.percentage === null ? '--' : '上次 ' + d.percentage + '%'}</span>`;
   }
   function header(title, subtitle) {
-    return `<header class="header">${view !== 'main' ? iconButton('back','chevron-left','返回电量面板') : ''}<div class="heading"><h1>${escape(title)}</h1>${subtitle ? `<div class="subtitle">${escape(subtitle)}</div>` : ''}</div>${view === 'main' ? `<div class="header-tools">${iconButton('widget','layout-grid','电池小组件','aria-pressed="true"')}${iconButton('list','list','设备列表')}${iconButton('settings','settings-2','设置')}${iconButton('close','x','收起电量面板')}</div>` : ''}</header>`;
+    return `<header class="header">${view !== 'main' ? iconButton('back','chevron-left','返回电量面板') : ''}<div class="heading"><h1>${escape(title)}</h1>${subtitle ? `<div class="subtitle">${escape(subtitle)}</div>` : ''}</div>${view === 'main' ? `<div class="header-tools">${iconButton('settings','settings-2','设置')}${iconButton('close','x','收起电量面板')}</div>` : ''}</header>`;
   }
   function footer() {
     const count = state.devices.filter(fresh).length;
@@ -137,8 +137,6 @@
     switch (control.dataset.action) {
       case 'settings': view = 'settings'; break;
       case 'close': window.battery.hide(); return;
-      case 'widget': void save({ layout: 'widget' }, true); return;
-      case 'list': view = 'settings'; void save({ layout: 'list' }); return;
       case 'back': view = 'main'; break;
       case 'detail': view = 'detail'; selected = control.dataset.device; break;
       case 'refresh': void window.battery.refresh().catch(e => { message = e.message; render(); }); break;

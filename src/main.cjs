@@ -8,6 +8,7 @@ const { normalize, initialDevices, mergeReadings, notificationBucket } = require
 const { executableForLogin, loginOptions, enabledFrom } = require('./startup.cjs');
 const { trayGuid, trayAsset } = require('./tray.cjs');
 const { stripDevices, stripBounds, taskbarWorkArea } = require('./strip.cjs');
+const { panelAnchor } = require('./panel.cjs');
 
 const testMode = process.env.BATTERY_DOCK_TEST === '1';
 if (testMode) {
@@ -169,6 +170,12 @@ function positionStrip() {
   if (lastAnchor?.strip && panel?.isVisible()) positionPanel(lastAnchor);
 }
 
+function updateTaskbarState(value) {
+  taskbarState = value;
+  positionStrip();
+  if (!strip?.isVisible() && panel?.isVisible()) positionPanel(lastAnchor);
+}
+
 function startTaskbarWatcher() {
   if (quitting || taskbarWatcher) return;
   const executable = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
@@ -181,13 +188,8 @@ function startTaskbarWatcher() {
       if (testMode && taskbarTestOverride) return;
       const value = JSON.parse(line);
       if (typeof value.autoHide !== 'boolean' || ![value.rect,value.bounds].every(rect => rect && ['x','y','width','height'].every(key => Number.isFinite(rect[key])))) return;
-      taskbarState = { ...value, rect: screen.screenToDipRect(null, value.rect), bounds: screen.screenToDipRect(null, value.bounds) };
-      positionStrip();
-      if (!strip?.isVisible() && panel?.isVisible()) {
-        const work = taskbarWorkArea(screen.getPrimaryDisplay(), taskbarState);
-        lastAnchor = { x: work.x + work.width - 24, y: work.y + work.height, width: 16, height: 0 };
-        positionPanel(lastAnchor);
-      }
+      if (value.overflow !== null && value.overflow !== undefined && !['x','y','width','height'].every(key => Number.isFinite(value.overflow[key]))) return;
+      updateTaskbarState({ ...value, rect: screen.screenToDipRect(null, value.rect), bounds: screen.screenToDipRect(null, value.bounds), overflow: value.overflow ? screen.screenToDipRect(null, value.overflow) : null });
     } catch {}
   });
   child.stderr.on('data', data => log('Taskbar watcher: ' + String(data).slice(0, 1000)));
@@ -234,7 +236,8 @@ function positionPanel(anchor) {
   const display = screen.getDisplayNearestPoint(point);
   const work = display.id === screen.getPrimaryDisplay().id ? taskbarWorkArea(display, taskbarState) : display.workArea;
   const [width, height] = lastPanelSize ? [lastPanelSize.width, lastPanelSize.height] : panel.getSize();
-  const source = anchor?.width ? anchor : { x: work.x + work.width - 24, y: work.y + work.height, width: 16, height: 0 };
+  const source = panelAnchor(work, anchor, taskbarState?.overflow);
+  lastAnchor = source;
   let x = source.x + source.width - width + 10;
   let y = source.y - height - 3;
   if (source.y < work.y + 30) y = source.y + source.height + 3;
@@ -429,7 +432,7 @@ else {
         setDevices: readings => { devices = mergeReadings(devices, readings); syncTrays(); broadcast(); },
         positionStrip,
         taskbar: () => taskbarState,
-        setTaskbar: value => { taskbarTestOverride = value !== null; taskbarState = value; positionStrip(); }
+        setTaskbar: value => { taskbarTestOverride = value !== null; updateTaskbarState(value); }
       };
     }
   }).catch(error => { log(error); app.quit(); });

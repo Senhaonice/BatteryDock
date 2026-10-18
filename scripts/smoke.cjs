@@ -44,6 +44,9 @@ async function main() {
     const page=await panelPage(app);
     page.on('pageerror',e=>errors.push(e.message));
     await page.waitForSelector('.panel');
+    assert.equal(await page.locator('.header-tools button').count(),2);
+    assert.equal(await page.locator('.header-tools [data-action="widget"], .header-tools [data-action="list"]').count(),0);
+    report.checks.push('Main header contains only Settings and Close; device views remain in Settings');
     report.hardware=await settle(app);
     assert.equal(report.hardware.settings.strip,false);
     assert.equal(await app.evaluate(()=>globalThis.batteryTest.strip()?.visible || false),false);
